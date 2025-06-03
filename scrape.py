@@ -13,7 +13,7 @@ from datasets import Dataset, load_dataset
 
 SRU_URL = "https://repository.overheid.nl/sru"
 QUERY = "c.product-area==lokalebekendmakingen"
-BATCH = 100  # Increased batch size
+BATCH = 100
 HF_REPO = "vGassen/Dutch-Lokale-Bekendmakingen"
 CHECKPOINT_FILE = "lb_checkpoint.json"
 
@@ -50,23 +50,23 @@ def iter_records(root: ET.Element):
             yield block
 
 def url_from(block: ET.Element) -> str | None:
-    # Prefer bronIdentifier — HTML page
     node = block.find(".//overheidwetgeving:bronIdentifier", {
         "overheidwetgeving": "http://standaarden.overheid.nl/wetgeving/"
     })
     if node is not None and node.text:
         url = node.text.strip()
+        print(f"[DEBUG] bronIdentifier raw URL: {url}")
         if url.endswith(".xml") or "repository.overheid.nl" in url:
             print(f"[DEBUG] Skipping metadata-only URL: {url}")
             return None
         print("[DEBUG] Using bronIdentifier for URL")
         return url
 
-    # Fallback to enriched metadata URLs (often XML, avoid)
     for tag in ("preferredUrl", "url", "itemUrl"):
         node = block.find(f".//gzd2:{tag}", {"gzd2": NS["gzd2"]})
         if node is not None and node.text:
             url = node.text.strip()
+            print(f"[DEBUG] fallback raw URL <{tag}>: {url}")
             if url.endswith(".xml") or "repository.overheid.nl" in url:
                 print(f"[DEBUG] Skipping fallback XML URL: {url}")
                 continue
@@ -77,9 +77,18 @@ def url_from(block: ET.Element) -> str | None:
 
 def scrape_text(page_url: str) -> str:
     try:
+        print(f"[DEBUG] Requesting page: {page_url}")
         html = requests.get(page_url, timeout=10).text
+
+        if html.strip().startswith("<?xml"):
+            print(f"[DEBUG] ❌ Got XML instead of HTML from: {page_url}")
+            return ""
+
         soup = BeautifulSoup(html, "html.parser")
-        return " ".join(p.get_text(" ", strip=True) for p in soup.find_all("p"))
+        paragraphs = soup.find_all("p")
+        if not paragraphs:
+            print(f"[DEBUG] ❌ No <p> tags found at: {page_url}")
+        return " ".join(p.get_text(" ", strip=True) for p in paragraphs)
     except Exception as exc:
         print(f"[WARN] Could not scrape {page_url}: {exc}")
         return ""
@@ -94,13 +103,13 @@ def collect_new_rows(seen_urls: list[str], max_records=250):
         for block in iter_records(root):
             url = url_from(block)
             if not url:
-                print("[DEBUG] Skipping block without URL")
+                print("[DEBUG] Skipping block without valid URL")
                 continue
             if url in seen_urls:
                 print(f"[DEBUG] Already seen: {url}")
                 continue
 
-            print(f"[DEBUG] Found candidate URL: {url}")
+            print(f"[DEBUG] → Evaluating URL: {url}")
             text = scrape_text(url)
             if text:
                 print(f"[DEBUG] ✅ Scraped OK: {url}")
