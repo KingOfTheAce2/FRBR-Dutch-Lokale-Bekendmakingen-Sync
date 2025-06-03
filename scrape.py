@@ -90,16 +90,22 @@ def collect_new_rows(seen_urls: list[str], max_records=500):
             if url in seen_urls:
                 print(f"[DEBUG] Already seen: {url}")
                 continue
+
+            print(f"[DEBUG] Found candidate URL: {url}")
             text = scrape_text(url)
             if text:
-                print(f"[DEBUG] New valid item: {url}")
+                print(f"[DEBUG] ✅ Scraped OK: {url}")
                 new_rows.append({"url": url, "content": text, "source": "Lokale Bekendmakingen"})
                 seen_urls.append(url)
+            else:
+                print(f"[DEBUG] ❌ No usable content at: {url}")
             time.sleep(0.2)
+
         if not new_rows:
             print("[DEBUG] No new valid items in this batch, stopping early.")
             break
         all_rows.extend(new_rows)
+
     print(f"[INFO] Collected {len(all_rows)} new items")
     return all_rows, seen_urls
 
