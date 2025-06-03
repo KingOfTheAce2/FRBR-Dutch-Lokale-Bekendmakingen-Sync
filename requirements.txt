@@ -1,3 +1,4 @@
 requests
 beautifulsoup4
 huggingface_hub>=0.10.0
+datasets
