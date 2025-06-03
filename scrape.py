@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Scrapes the latest 50 'lokale bekendmakingen', extracts text, 
+Scrapes the latest 500 'lokale bekendmakingen', extracts text,
 removes duplicates using a checkpoint, and pushes to Hugging Face.
 """
 import os
 import json
 import time
 import xml.etree.ElementTree as ET
-from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from datasets import Dataset, load_dataset
-from huggingface_hub import HfApi
 
 SRU_URL = "https://repository.overheid.nl/sru"
 QUERY = "c.product-area==lokalebekendmakingen"
@@ -26,9 +24,8 @@ NS = {
 }
 
 def load_checkpoint():
-    if os.path.exists(CHECKPOINT_FILE):
-        with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+    # TEMPORARILY RESETTING CHECKPOINT — ignore file
+    print("[DEBUG] Temporarily ignoring checkpoint file")
     return {"seen_urls": []}
 
 def save_checkpoint(state):
@@ -71,20 +68,28 @@ def scrape_text(page_url: str) -> str:
 
 def collect_new_rows(seen_urls: list[str], max_records=500):
     all_rows = []
+    print(f"[DEBUG] Starting record scan, initial checkpoint has {len(seen_urls)} URLs")
     for start in range(1, max_records + 1, BATCH):
+        print(f"[DEBUG] Fetching records {start} to {start + BATCH - 1}")
         root = fetch_xml(start=start, size=BATCH)
         new_rows = []
         for block in iter_records(root):
             url = url_from(block)
-            if not url or url in seen_urls:
+            if not url:
+                print("[DEBUG] Skipping block without URL")
+                continue
+            if url in seen_urls:
+                print(f"[DEBUG] Already seen: {url}")
                 continue
             text = scrape_text(url)
             if text:
+                print(f"[DEBUG] New valid item: {url}")
                 new_rows.append({"url": url, "content": text, "source": "Lokale Bekendmakingen"})
                 seen_urls.append(url)
             time.sleep(0.2)
         if not new_rows:
-            break  # Stop early if a full batch yields nothing new
+            print("[DEBUG] No new valid items in this batch, stopping early.")
+            break
         all_rows.extend(new_rows)
     print(f"[INFO] Collected {len(all_rows)} new items")
     return all_rows, seen_urls
@@ -99,7 +104,7 @@ def push_to_hub(rows):
     except Exception as e:
         print(f"[WARN] Could not load existing dataset: {e}")
         combined = Dataset.from_list(rows)
-    
+
     print(f"[INFO] Uploading {len(combined)} entries to Hugging Face…")
     combined.push_to_hub(HF_REPO)
 
