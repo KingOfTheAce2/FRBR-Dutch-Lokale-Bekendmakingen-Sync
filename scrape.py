@@ -72,7 +72,6 @@ def scrape_text(page_url: str) -> str:
 def collect_new_rows(seen_urls: list[str]):
     root = fetch_xml()
     rows = []
-
     for block in iter_records(root):
         url = url_from(block)
         if not url or url in seen_urls:
@@ -82,7 +81,6 @@ def collect_new_rows(seen_urls: list[str]):
             rows.append({"url": url, "content": text, "source": "Lokale Bekendmakingen"})
             seen_urls.append(url)
         time.sleep(0.2)
-
     print(f"[INFO] Collected {len(rows)} new items")
     return rows, seen_urls
 
@@ -90,14 +88,13 @@ def push_to_hub(rows):
     if not rows:
         print("[INFO] No new data to push.")
         return
-
     try:
         existing = Dataset.from_list(load_dataset(HF_REPO, split="train").to_list())
         combined = Dataset.from_list(existing.to_list() + rows)
     except Exception as e:
         print(f"[WARN] Could not load existing dataset: {e}")
         combined = Dataset.from_list(rows)
-
+    
     print(f"[INFO] Uploading {len(combined)} entries to Hugging Face…")
     combined.push_to_hub(HF_REPO)
 
@@ -105,10 +102,8 @@ def main():
     print("[INFO] Starting scrape...")
     checkpoint = load_checkpoint()
     seen_urls = checkpoint.get("seen_urls", [])
-
     rows, updated_urls = collect_new_rows(seen_urls)
     push_to_hub(rows)
-
     checkpoint["seen_urls"] = updated_urls
     save_checkpoint(checkpoint)
     print("[INFO] Done.")
