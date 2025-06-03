@@ -11,8 +11,7 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
-from huggingface_hub import HfApi, RepositoryNotFoundError, HfHubHTTPError
-
+from huggingface_hub import HfApi, HfHubHTTPError
 
 SRU_URL   = "https://repository.overheid.nl/sru"
 QUERY     = "c.product-area==lokalebekendmakingen"
@@ -102,7 +101,7 @@ def make_repo_file(api: HfApi):
                 token=os.environ["HF_TOKEN"],
                 commit_message="initialise empty dataset file"
             )
-    except (RepositoryNotFoundError, HfHubHTTPError) as exc:
+    except HfHubHTTPError as exc:
         raise SystemExit(f"Repository problem: {exc}")
 
 
