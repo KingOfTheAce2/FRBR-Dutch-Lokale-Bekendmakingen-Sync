@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Scrapes the latest 500 'lokale bekendmakingen', extracts text,
+Scrapes the latest 250 'lokale bekendmakingen', extracts text,
 removes duplicates using a checkpoint, and pushes to Hugging Face.
 """
 import os
@@ -13,7 +13,7 @@ from datasets import Dataset, load_dataset
 
 SRU_URL = "https://repository.overheid.nl/sru"
 QUERY = "c.product-area==lokalebekendmakingen"
-BATCH = 50
+BATCH = 100  # Increased batch size
 HF_REPO = "vGassen/Dutch-Lokale-Bekendmakingen"
 CHECKPOINT_FILE = "lb_checkpoint.json"
 
@@ -24,7 +24,6 @@ NS = {
 }
 
 def load_checkpoint():
-    # TEMPORARILY RESETTING CHECKPOINT — ignore file
     print("[DEBUG] Temporarily ignoring checkpoint file")
     return {"seen_urls": []}
 
@@ -51,17 +50,17 @@ def iter_records(root: ET.Element):
             yield block
 
 def url_from(block: ET.Element) -> str | None:
-    # First try bronIdentifier (preferred)
     node = block.find(".//overheidwetgeving:bronIdentifier", {
         "overheidwetgeving": "http://standaarden.overheid.nl/wetgeving/"
     })
     if node is not None and node.text:
+        print("[DEBUG] Using bronIdentifier for URL")
         return node.text.strip()
 
-    # Fallback to older method
     for tag in ("preferredUrl", "url", "itemUrl"):
         node = block.find(f".//gzd2:{tag}", {"gzd2": NS["gzd2"]})
         if node is not None and node.text:
+            print(f"[DEBUG] Using fallback tag <{tag}> for URL")
             return node.text.strip()
 
     return None
@@ -75,11 +74,11 @@ def scrape_text(page_url: str) -> str:
         print(f"[WARN] Could not scrape {page_url}: {exc}")
         return ""
 
-def collect_new_rows(seen_urls: list[str], max_records=500):
+def collect_new_rows(seen_urls: list[str], max_records=250):
     all_rows = []
     print(f"[DEBUG] Starting record scan, initial checkpoint has {len(seen_urls)} URLs")
     for start in range(1, max_records + 1, BATCH):
-        print(f"[DEBUG] Fetching records {start} to {start + BATCH - 1}")
+        print(f"[DEBUG] Fetching records {start} to {min(start + BATCH - 1, max_records)}")
         root = fetch_xml(start=start, size=BATCH)
         new_rows = []
         for block in iter_records(root):
