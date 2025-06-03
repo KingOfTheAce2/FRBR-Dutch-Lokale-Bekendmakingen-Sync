@@ -55,7 +55,7 @@ def url_from(block: ET.Element) -> str | None:
     })
     if node is not None and node.text:
         url = node.text.strip()
-        print(f"[DEBUG] bronIdentifier raw URL: {url}")
+        print(f"[DEBUG] bronIdentifier raw URL: {url}")  # ← required
         if url.endswith(".xml") or "repository.overheid.nl" in url:
             print(f"[DEBUG] Skipping metadata-only URL: {url}")
             return None
