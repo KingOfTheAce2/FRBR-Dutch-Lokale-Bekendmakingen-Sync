@@ -3,7 +3,8 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import json
 import os
-from huggingface_hub import HfApi, HfFolder, RepositoryNotFoundError, HfHubHTTPError
+from huggingface_hub import HfApi
+from huggingface_hub.utils import HfHubHTTPError, RepositoryNotFoundError
 
 SRU_URL = "https://repository.overheid.nl/sru"
 QUERY = "c.product-area==lokalebekendmakingen"
