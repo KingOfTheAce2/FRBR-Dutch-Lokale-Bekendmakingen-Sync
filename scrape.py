@@ -50,18 +50,28 @@ def iter_records(root: ET.Element):
             yield block
 
 def url_from(block: ET.Element) -> str | None:
+    # Prefer bronIdentifier — HTML page
     node = block.find(".//overheidwetgeving:bronIdentifier", {
         "overheidwetgeving": "http://standaarden.overheid.nl/wetgeving/"
     })
     if node is not None and node.text:
+        url = node.text.strip()
+        if url.endswith(".xml") or "repository.overheid.nl" in url:
+            print(f"[DEBUG] Skipping metadata-only URL: {url}")
+            return None
         print("[DEBUG] Using bronIdentifier for URL")
-        return node.text.strip()
+        return url
 
+    # Fallback to enriched metadata URLs (often XML, avoid)
     for tag in ("preferredUrl", "url", "itemUrl"):
         node = block.find(f".//gzd2:{tag}", {"gzd2": NS["gzd2"]})
         if node is not None and node.text:
+            url = node.text.strip()
+            if url.endswith(".xml") or "repository.overheid.nl" in url:
+                print(f"[DEBUG] Skipping fallback XML URL: {url}")
+                continue
             print(f"[DEBUG] Using fallback tag <{tag}> for URL")
-            return node.text.strip()
+            return url
 
     return None
 
