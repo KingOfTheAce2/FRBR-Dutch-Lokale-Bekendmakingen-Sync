@@ -51,10 +51,19 @@ def iter_records(root: ET.Element):
             yield block
 
 def url_from(block: ET.Element) -> str | None:
+    # First try bronIdentifier (preferred)
+    node = block.find(".//overheidwetgeving:bronIdentifier", {
+        "overheidwetgeving": "http://standaarden.overheid.nl/wetgeving/"
+    })
+    if node is not None and node.text:
+        return node.text.strip()
+
+    # Fallback to older method
     for tag in ("preferredUrl", "url", "itemUrl"):
         node = block.find(f".//gzd2:{tag}", {"gzd2": NS["gzd2"]})
         if node is not None and node.text:
             return node.text.strip()
+
     return None
 
 def scrape_text(page_url: str) -> str:
