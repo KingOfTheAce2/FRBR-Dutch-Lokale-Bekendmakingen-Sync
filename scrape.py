@@ -69,20 +69,25 @@ def scrape_text(page_url: str) -> str:
         print(f"[WARN] Could not scrape {page_url}: {exc}")
         return ""
 
-def collect_new_rows(seen_urls: list[str]):
-    root = fetch_xml()
-    rows = []
-    for block in iter_records(root):
-        url = url_from(block)
-        if not url or url in seen_urls:
-            continue
-        text = scrape_text(url)
-        if text:
-            rows.append({"url": url, "content": text, "source": "Lokale Bekendmakingen"})
-            seen_urls.append(url)
-        time.sleep(0.2)
-    print(f"[INFO] Collected {len(rows)} new items")
-    return rows, seen_urls
+def collect_new_rows(seen_urls: list[str], max_records=500):
+    all_rows = []
+    for start in range(1, max_records + 1, BATCH):
+        root = fetch_xml(start=start, size=BATCH)
+        new_rows = []
+        for block in iter_records(root):
+            url = url_from(block)
+            if not url or url in seen_urls:
+                continue
+            text = scrape_text(url)
+            if text:
+                new_rows.append({"url": url, "content": text, "source": "Lokale Bekendmakingen"})
+                seen_urls.append(url)
+            time.sleep(0.2)
+        if not new_rows:
+            break  # Stop early if a full batch yields nothing new
+        all_rows.extend(new_rows)
+    print(f"[INFO] Collected {len(all_rows)} new items")
+    return all_rows, seen_urls
 
 def push_to_hub(rows):
     if not rows:
