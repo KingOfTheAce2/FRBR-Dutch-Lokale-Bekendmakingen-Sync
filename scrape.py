@@ -2,14 +2,15 @@ import requests
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import json
-from huggingface_hub import HfApi, upload_file
 import os
+from huggingface_hub import HfApi
 
 SRU_URL = "https://repository.overheid.nl/sru"
 QUERY = "c.product-area==lokalebekendmakingen"
 HEADERS = {"Accept": "application/xml"}
 BATCH_SIZE = 50
-DATASET_FILE = "lokale_bekendmakingen.jsonl"
+HF_REPO = "vGassen/Dutch-Lokale-Bekendmakingen"
+TARGET_FILE = "lokale_bekendmakingen.jsonl"
 
 def fetch_records(start=1, max_records=50):
     params = {
@@ -46,26 +47,24 @@ def extract_entries(xml_root):
             })
     return records
 
-def save_records(records):
-    with open(DATASET_FILE, "a", encoding="utf-8") as f:
-        for rec in records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
-def upload_to_huggingface():
+def upload_to_huggingface(jsonl_text):
+    temp_file = "temp_append.jsonl"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        f.write(jsonl_text)
     api = HfApi()
-    repo_id = "vGassen/Dutch-Lokale-Bekendmakingen"
     api.upload_file(
-        path_or_fileobj=DATASET_FILE,
-        path_in_repo="lokale_bekendmakingen.jsonl",
-        repo_id=repo_id,
+        path_or_fileobj=temp_file,
+        path_in_repo=TARGET_FILE,
+        repo_id=HF_REPO,
         repo_type="dataset",
         token=os.environ["HF_TOKEN"],
-        commit_message="Append 50 new records"
+        commit_message="Append 50 new Lokale Bekendmakingen records"
     )
+    os.remove(temp_file)
 
 if __name__ == "__main__":
     xml_root = fetch_records()
     records = extract_entries(xml_root)
     if records:
-        save_records(records)
-        upload_to_huggingface()
+        jsonl_data = "\n".join(json.dumps(rec, ensure_ascii=False) for rec in records)
+        upload_to_huggingface(jsonl_data)
