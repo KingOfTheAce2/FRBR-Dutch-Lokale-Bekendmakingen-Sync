@@ -11,6 +11,7 @@ This repo collects recent entries from the Dutch "Lokale Bekendmakingen" (local 
 
 ### Usage
 
-Run locally with Python 3.10+:
+Run locally with Python 3.11+:
 ```bash
 python crawler_officiele.py --max-items 500
+```
