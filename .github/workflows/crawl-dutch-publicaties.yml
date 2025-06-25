@@ -1,0 +1,30 @@
+name: Daily Dutch FRBR Crawl
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # every day at 03:00 UTC
+  workflow_dispatch:     # manual trigger
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 lxml datasets tqdm huggingface_hub
+
+      - name: Run crawler
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_DATASET_REPO: vGassen/Dutch-Officiele-Publicaties-Lokale-Bekendmakingen
+          HF_PRIVATE: false
+        run: |
+          python crawler_officiele.py --max-items 500 --resume
