@@ -18,6 +18,9 @@ jobs:
           # Use a maintained Python version
           python-version: '3.11'
 
+      - name: Verify Python version
+        run: python --version
+
       - name: Install dependencies
         run: |
           pip install requests beautifulsoup4 lxml datasets tqdm huggingface_hub
