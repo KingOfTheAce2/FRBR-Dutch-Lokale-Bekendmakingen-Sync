@@ -1,8 +1,8 @@
-name: Daily Dutch FRBR Crawl
+name: Weekly Dutch FRBR Crawl
 
 on:
   schedule:
-    - cron: '0 3 * * *'   # every day at 03:00 UTC
+    - cron: '0 3 * * 0'   # every Sunday at 03:00 UTC
   workflow_dispatch:     # manual trigger
 
 jobs:
@@ -23,12 +23,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 lxml datasets tqdm huggingface_hub
+          pip install -r requirements.txt
 
-      - name: Run crawler
+      - name: Run pipeline
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_DATASET_REPO: vGassen/Dutch-Officiele-Publicaties-Lokale-Bekendmakingen
-          HF_PRIVATE: false
         run: |
-          python crawler_officiele.py --max-items 500 --resume
+          python step1_collect_urls.py
+          python step2_download_items.py
+          python step3_clean_text.py
+          python step4_upload_shards.py --token $HF_TOKEN

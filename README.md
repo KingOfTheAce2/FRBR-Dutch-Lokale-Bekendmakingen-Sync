@@ -1,17 +1,31 @@
 # Dutch Lokale Bekendmakingen Scraper
 
-This repo collects recent entries from the Dutch "Lokale Bekendmakingen" (local government announcements) and publishes them to the Hugging Face dataset:
+This project collects recent entries from the Dutch "Lokale Bekendmakingen" (local government announcements) and publishes them to the [Hugging Face dataset](https://huggingface.co/datasets/vGassen/Dutch-Lokale-Bekendmakingen).
 
-👉 https://huggingface.co/datasets/vGassen/Dutch-Lokale-Bekendmakingen
-
-### Fields:
-- `URL`: Link to the full document
-- `content`: Scraped text content
-- `source`: Always `"Lokale Bekendmakingen"`
+### Fields
+- `url` – link to the document
+- `content` – cleaned text content
+- `source` – either `officielepublicaties` or `lokalebekendmakingen`
 
 ### Usage
 
-Run locally with Python 3.11+:
-```bash
-python crawler_officiele.py --max-items 500
-```
+Python 3.11+ is recommended. The scraping pipeline consists of four scripts that should be run in order:
+
+1. **Collect URLs**
+   ```bash
+   python step1_collect_urls.py
+   ```
+2. **Download the items**
+   ```bash
+   python step2_download_items.py
+   ```
+3. **Clean text and create JSONL**
+   ```bash
+   python step3_clean_text.py
+   ```
+4. **Upload to the dataset**
+   ```bash
+   python step4_upload_shards.py --token <HF_TOKEN>
+   ```
+
+You can also store the Hugging Face token in a `.env` file using `HF_TOKEN=<token>`.
