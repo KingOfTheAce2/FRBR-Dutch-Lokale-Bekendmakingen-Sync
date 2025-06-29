@@ -36,6 +36,16 @@ def save_local_progress(index: int):
     with open(PROGRESS_FILE, 'w', encoding='utf-8') as f:
         json.dump({"last_index": index}, f)
 
+def flush_repo(api: HfApi, repo_id: str, token: str) -> None:
+    """Delete all files from the repository."""
+    try:
+        files = api.list_repo_files(repo_id=repo_id, repo_type="dataset", token=token)
+        for path in files:
+            api.delete_file(path_in_repo=path, repo_id=repo_id, repo_type="dataset", token=token)
+        print(f"Flushed repository '{repo_id}'.")
+    except Exception as e:
+        print(f"Could not flush repository '{repo_id}': {e}", file=sys.stderr)
+
 def get_remote_index(api: HfApi, repo_id: str, token: str) -> int:
     """Find the max index from shard filenames on the remote dataset."""
     try:
@@ -77,6 +87,7 @@ def main():
     parser.add_argument("--repo_id", type=str, default=REPO_ID, help="Hugging Face repository ID.")
     parser.add_argument("--token", type=str, default=os.getenv("HF_TOKEN"), help="Hugging Face API token.")
     parser.add_argument("--shard_size", type=int, default=SHARD_SIZE, help="Number of records per shard.")
+    parser.add_argument("--flush", action="store_true", help="Delete all remote files before uploading.")
     args = parser.parse_args()
 
     if not args.token:
@@ -99,10 +110,15 @@ def main():
     print(f"Ensuring repository '{args.repo_id}' exists...")
     create_repo(args.repo_id, repo_type="dataset", token=args.token, exist_ok=True)
 
-    # Determine starting point
-    local_start_index = load_local_progress()
-    remote_start_index = get_remote_index(api, args.repo_id, args.token)
-    start_index = max(local_start_index, remote_start_index)
+    if args.flush:
+        flush_repo(api, args.repo_id, args.token)
+        save_local_progress(0)
+        start_index = 0
+    else:
+        # Determine starting point
+        local_start_index = load_local_progress()
+        remote_start_index = get_remote_index(api, args.repo_id, args.token)
+        start_index = max(local_start_index, remote_start_index)
     
     if start_index >= total_records:
         print("Dataset is already up-to-date. All local records have been uploaded.")

@@ -28,4 +28,7 @@ Python 3.11+ is recommended. The scraping pipeline consists of four scripts that
    python step4_upload_shards.py --token <HF_TOKEN>
    ```
 
+Pass `--flush` on the first manual run to remove any existing shards from the
+Hugging Face dataset before uploading new data.
+
 You can also store the Hugging Face token in a `.env` file using `HF_TOKEN=<token>`.
