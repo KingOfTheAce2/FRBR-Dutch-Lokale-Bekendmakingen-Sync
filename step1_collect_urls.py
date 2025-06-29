@@ -8,6 +8,7 @@ import random
 import requests
 from bs4 import BeautifulSoup
 from typing import List, Set, Dict, Any
+from urllib.parse import urlparse
 
 # --- Constants ---
 BASE_REPOS = [
@@ -63,19 +64,34 @@ def save_progress(urls: List[Dict[str, str]]):
     with open(URL_LIST_FILE, 'w', encoding='utf-8') as f:
         json.dump(urls, f, indent=2, ensure_ascii=False)
 
+ALLOWED_DOMAINS = [
+    "repository.overheid.nl",
+    "zoek.officielebekendmakingen.nl",
+    "lokalebekendmakingen.nl",
+]
+
 def find_links(soup: BeautifulSoup) -> List[str]:
-    """Finds all absolute links on a page, sorted descending."""
-    links = []
+    """Finds all absolute links on a page within the allowed domains."""
+    base_url = "https://repository.overheid.nl"
+    links: Set[str] = set()
+
     for a_tag in soup.find_all('a', href=True):
         href = a_tag['href']
-        # Ensure it's a sub-path and not a parent link like "../"
-        if not href.startswith('?') and not href.startswith('../'):
-             # Create absolute URL
-            base_url = "https://repository.overheid.nl"
-            if not href.startswith('http'):
-                href = f"{base_url}{href}" if href.startswith('/') else f"{base_url}/{href}"
-            links.append(href)
-    return sorted(list(set(links)), reverse=True)
+
+        # Skip query-only or parent references
+        if href.startswith('?') or href.startswith('../'):
+            continue
+
+        # Convert to absolute if needed
+        if not href.startswith('http'):
+            href = f"{base_url}{href}" if href.startswith('/') else f"{base_url}/{href}"
+
+        # Only keep links that stay within the allowed domains
+        domain = urlparse(href).netloc
+        if any(domain == dom or domain.endswith(f".{dom}") for dom in ALLOWED_DOMAINS):
+            links.add(href)
+
+    return sorted(links, reverse=True)
 
 
 # --- Main Logic ---
