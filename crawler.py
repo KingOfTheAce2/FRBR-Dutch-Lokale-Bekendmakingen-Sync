@@ -2,203 +2,170 @@ import os
 import json
 import time
 import logging
+from pathlib import Path
+from typing import Dict, List
 import requests
-from lxml import etree, html
-from huggingface_hub import HfApi, HfFolder, upload_file
+from lxml import etree
+from huggingface_hub import HfApi, create_repo
 
 # ---------------- CONFIGURATION ----------------
-
-API_URL = "https://repository.overheid.nl/sru"  # Change as needed
-API_PARAMS = {
-    "operation": "searchRetrieve",
-    "query": "collection=officielepublicaties",  # SRU query
-    "maximumRecords": 100,  # Batch size (SRU max is 1000)
-    "startRecord": 1
-}
-STATE_FILE = "crawler_state.json"
+SRU_URL = "https://repository.overheid.nl/sru"
+CQL_QUERY = "c.product-area==lokalebekendmakingen"   # Lokale Bekendmakingen
+SRU_VERSION = "2.0"
+BATCH_SIZE = 1000              # Max per request
+STATE_PATH = "crawler_state.json"
 OUTPUT_JSONL = "output.jsonl"
-SOURCE_LABEL = "Officiële Publicaties"  # Change as needed
-HF_REPO_ID = "vGassen/Dutch-Officiele-Publicaties"
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
-BATCH_SIZE = 100  # SRU allows up to 1000
-SHARD_SIZE = 300  # number of records per JSONL shard file
-MAX_ENTRIES = 10000  # Max entries per run
-TIMEOUT = 20
-RETRIES = 5
-
-# ---------------- LOGGING SETUP ----------------
+HF_REPO_ID = "vGassen/Dutch-Lokale-Bekendmakingen"
+SOURCE = "Lokale Bekendmakingen"
+SHARD_SIZE = 300               # ≤300 records per HF push
+LOGLEVEL = logging.INFO
+# ------------------------------------------------
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(asctime)s [%(levelname)s] %(message)s", level=LOGLEVEL
 )
 
-# ---------------- UTILITIES ----------------
+def load_state() -> int:
+    if Path(STATE_PATH).exists():
+        with open(STATE_PATH, "r") as f:
+            return json.load(f).get("start_record", 1)
+    return 1
 
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    return {"last_record": 1, "processed": set()}
+def save_state(start_record: int):
+    with open(STATE_PATH, "w") as f:
+        json.dump({"start_record": start_record}, f)
 
-def save_state(state):
-    # Sets not serializable: convert
-    state['processed'] = list(state['processed'])
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
-    state['processed'] = set(state['processed'])
-
-def append_jsonl(records, fname):
-    with open(fname, "a", encoding="utf-8") as f:
-        for rec in records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
-def strip_html(text):
-    tree = html.fromstring(text)
-    return " ".join(tree.xpath('//text()[normalize-space()]')).strip()
-
-def extract_main_content(xml_bytes):
-    """Extract main content from Rechtspraak/OFFP SRU XML record"""
+def strip_html(text: str) -> str:
     try:
-        tree = etree.fromstring(xml_bytes)
-        # Most official publications have <dc:identifier> for the URL and main text in <dcterms:abstract> or similar
-        namespaces = tree.nsmap
-        url = tree.findtext(".//{*}identifier")
-        text = ""
-        # Try multiple options for text content
-        for tag in [
-            ".//{*}description",
-            ".//{*}abstract",
-            ".//{*}body",
-            ".//{*}text",
-        ]:
-            node = tree.find(tag)
-            if node is not None and node.text:
-                text = node.text
-                break
-        # fallback: all text nodes concatenated
-        if not text:
-            text = " ".join(tree.xpath('.//text()'))
-        return url, strip_html(text)
-    except Exception as ex:
-        logging.error(f"Failed to extract content: {ex}")
-        return None, None
-
-def download_url(url):
-    tries = 0
-    while tries < RETRIES:
-        try:
-            resp = requests.get(url, timeout=TIMEOUT)
-            if resp.status_code == 200:
-                return resp.text
-            else:
-                logging.warning(f"Failed to fetch {url}: {resp.status_code}")
-        except Exception as ex:
-            logging.warning(f"Error downloading {url}: {ex}")
-        tries += 1
-        time.sleep(2 * tries)
-    return None
-
-def push_to_hf(local_path, repo_id, hf_token, filename):
-    api = HfApi(token=hf_token)
-    try:
-        api.create_repo(repo_id, repo_type="dataset", exist_ok=True, private=False)
+        parser = etree.HTMLParser(recover=True)
+        root = etree.fromstring(f"<div>{text}</div>", parser=parser)
+        cleaned = " ".join(root.itertext())
+        return " ".join(cleaned.split())
     except Exception:
-        pass  # repo may already exist
-    upload_file(
-        path_or_fileobj=local_path,
-        path_in_repo=filename,
-        repo_id=repo_id,
-        repo_type="dataset",
-        token=hf_token,
-        commit_message="Add new data shard"
-    )
-    logging.info(f"Pushed {filename} to {repo_id}")
+        return text
 
-# ---------------- MAIN CRAWLER LOOP ----------------
+def parse_record(record_xml: bytes) -> Dict[str, str] | None:
+    try:
+        root = etree.fromstring(record_xml)
+        # Find the URL in enrichedData/locationURI if present
+        url = ""
+        url_el = root.find(".//locationURI")
+        if url_el is not None and url_el.text:
+            url = url_el.text.strip()
+        # Gather content from meta, body, fallback to all text
+        parts = []
+        meta = root.find(".//meta")
+        if meta is not None:
+            for e in meta.iter():
+                if e.text and e.tag not in ["identifier", "locationURI"]:
+                    parts.append(e.text)
+        body = root.find(".//body")
+        if body is not None:
+            parts.append(strip_html(etree.tostring(body, encoding="unicode")))
+        if not parts:
+            parts.append(strip_html(etree.tostring(root, encoding="unicode")))
+        content = "\n".join(parts)
+        content = strip_html(content)
+        if not url:
+            # fallback: use identifier if locationURI missing
+            id_el = root.find(".//identifier")
+            url = id_el.text.strip() if id_el is not None and id_el.text else ""
+        return {
+            "URL": url,
+            "Content": content,
+            "Source": SOURCE
+        }
+    except Exception as ex:
+        logging.warning(f"Failed to parse record: {ex}")
+        return None
 
-def crawl():
-    state = load_state()
-    state['processed'] = set(state.get('processed', []))
-    total_processed = 0
-    shard_counter = 1
-    jsonl_records = []
+def fetch_batch(start_record: int) -> List[Dict[str, str]]:
+    params = {
+        "version": SRU_VERSION,
+        "operation": "searchRetrieve",
+        "query": CQL_QUERY,
+        "startRecord": start_record,
+        "maximumRecords": BATCH_SIZE
+    }
+    for retry in range(5):
+        try:
+            resp = requests.get(SRU_URL, params=params, timeout=60)
+            resp.raise_for_status()
+            root = etree.fromstring(resp.content)
+            records = root.findall(".//{*}recordData")
+            batch = []
+            for r in records:
+                # Some SRU XML wraps <recordData><gzd>...</gzd></recordData>
+                gzd = r[0] if len(r) > 0 else r
+                rec_xml = etree.tostring(gzd, encoding="utf-8")
+                doc = parse_record(rec_xml)
+                if doc and doc["Content"].strip():
+                    batch.append(doc)
+            logging.info(f"Fetched batch: {len(batch)} records (startRecord={start_record})")
+            return batch
+        except Exception as ex:
+            logging.warning(f"Fetch batch failed (attempt {retry+1}): {ex}")
+            time.sleep(2 ** retry)
+    raise RuntimeError("Failed to fetch batch after retries")
 
-    start_record = state["last_record"]
-    logging.info(f"Starting from record {start_record}")
+def append_jsonl(records: List[Dict[str, str]], path: str):
+    with open(path, "a", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    while total_processed < MAX_ENTRIES:
-        params = API_PARAMS.copy()
-        params['startRecord'] = start_record
-        params['maximumRecords'] = BATCH_SIZE
+def shard_jsonl(path: str, shard_size: int) -> List[str]:
+    shards = []
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    for i in range(0, len(lines), shard_size):
+        shard_path = f"{path}_shard_{i}_{i+shard_size}.jsonl"
+        with open(shard_path, "w", encoding="utf-8") as s:
+            s.writelines(lines[i:i+shard_size])
+        shards.append(shard_path)
+    return shards
 
-        tries = 0
-        success = False
-        while tries < RETRIES:
-            try:
-                resp = requests.get(API_URL, params=params, timeout=TIMEOUT)
-                if resp.status_code == 200:
-                    success = True
-                    break
-                else:
-                    logging.warning(f"SRU API error: {resp.status_code}")
-            except Exception as ex:
-                logging.warning(f"SRU connection error: {ex}")
-            tries += 1
-            time.sleep(2 * tries)
-        if not success:
-            logging.error("Max retries exceeded for SRU, exiting.")
+def push_to_hf(shard_paths: List[str]):
+    token = os.getenv("HF_TOKEN")
+    if not token:
+        raise RuntimeError("Set HF_TOKEN env variable for Hugging Face access.")
+    api = HfApi()
+    create_repo(HF_REPO_ID, repo_type="dataset", exist_ok=True, token=token)
+    for shard_path in shard_paths:
+        name = Path(shard_path).name
+        logging.info(f"Pushing {name} to HuggingFace ({HF_REPO_ID}) ...")
+        api.upload_file(
+            path_or_fileobj=shard_path,
+            path_in_repo=f"data/{name}",
+            repo_id=HF_REPO_ID,
+            repo_type="dataset",
+            token=token
+        )
+        logging.info(f"Uploaded: {name}")
+
+def main():
+    start_record = load_state()
+    all_count = 0
+    while True:
+        batch = fetch_batch(start_record)
+        if not batch:
+            logging.info("No more records. Finished.")
             break
-
-        root = etree.fromstring(resp.content)
-        records = root.findall(".//{*}record")
-        if not records:
-            logging.info("No more records.")
-            break
-
-        for record in records:
-            raw_xml = etree.tostring(record, encoding="utf-8")
-            url, main_text = extract_main_content(raw_xml)
-            if not url or url in state['processed']:
-                continue
-            # Fetch main URL for full content
-            full_content = download_url(url)
-            clean_text = strip_html(full_content) if full_content else main_text
-            # Write to memory
-            rec = {
-                "URL": url,
-                "Content": clean_text,
-                "Source": SOURCE_LABEL
-            }
-            jsonl_records.append(rec)
-            state['processed'].add(url)
-            total_processed += 1
-            if total_processed % 50 == 0:
-                logging.info(f"Processed {total_processed} records.")
-
-            # Write shard and upload if needed
-            if len(jsonl_records) >= SHARD_SIZE:
-                shard_fname = f"data_shard_{shard_counter}.jsonl"
-                append_jsonl(jsonl_records, shard_fname)
-                push_to_hf(shard_fname, HF_REPO_ID, HF_TOKEN, shard_fname)
-                jsonl_records = []
-                shard_counter += 1
-
-            if total_processed >= MAX_ENTRIES:
-                break
-
-        start_record += len(records)
-        state['last_record'] = start_record
-        save_state(state)
-
-    # Write remaining
-    if jsonl_records:
-        shard_fname = f"data_shard_{shard_counter}.jsonl"
-        append_jsonl(jsonl_records, shard_fname)
-        push_to_hf(shard_fname, HF_REPO_ID, HF_TOKEN, shard_fname)
-
-    save_state(state)
-    logging.info(f"Finished, total processed: {total_processed}")
+        append_jsonl(batch, OUTPUT_JSONL)
+        all_count += len(batch)
+        start_record += len(batch)
+        save_state(start_record)
+        logging.info(f"Saved {all_count} total records so far. Next startRecord={start_record}")
+        # Shard and push after each batch or at the end
+        if all_count % SHARD_SIZE == 0:
+            shards = shard_jsonl(OUTPUT_JSONL, SHARD_SIZE)
+            push_to_hf(shards)
+            logging.info("Pushed all shards to Hugging Face.")
+            for s in shards:
+                os.remove(s)
+    # Final push for leftovers
+    shards = shard_jsonl(OUTPUT_JSONL, SHARD_SIZE)
+    push_to_hf(shards)
+    logging.info("Done: All data uploaded.")
 
 if __name__ == "__main__":
-    crawl()
+    main()
